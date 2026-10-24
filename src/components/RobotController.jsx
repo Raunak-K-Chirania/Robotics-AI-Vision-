@@ -1,5 +1,33 @@
-import React, { useEffect, useRef, useCallback } from 'react';
-import { Gamepad2, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw, RotateCw, Zap } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { Gamepad2, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw, Zap } from 'lucide-react';
+
+/**
+ * On-screen D-Pad Button defined outside the component to avoid recreating
+ * component types on every render.
+ */
+function DPadBtn({ keyCode, icon: Icon, label, gridArea, onPress, onRelease }) {
+  return (
+    <button
+      type="button"
+      onPointerDown={() => onPress(keyCode)}
+      onPointerUp={() => onRelease(keyCode)}
+      onPointerLeave={() => onRelease(keyCode)}
+      onPointerCancel={() => onRelease(keyCode)}
+      aria-label={label}
+      style={{ gridArea }}
+      className={`
+        flex items-center justify-center rounded-lg border select-none touch-none
+        bg-slate-900/80 border-slate-700 text-slate-300
+        hover:bg-cyan-950/60 hover:border-cyan-500 hover:text-cyan-300
+        active:bg-cyan-900/80 active:border-cyan-400 active:scale-95
+        transition-all duration-100 cursor-pointer p-3
+        shadow-md shadow-black/40
+      `}
+    >
+      <Icon className="w-5 h-5 pointer-events-none" />
+    </button>
+  );
+}
 
 /**
  * RobotController — exposes a pressedKeys ref that Robot3DView reads each frame.
@@ -48,36 +76,27 @@ export default function RobotController({ pressedKeys, controlMode, setControlMo
   }, [pressedKeys]);
 
   // ── On-screen button helpers ───────────────────────────────────────────────
-  const press = useCallback((key) => {
+  const press = (key) => {
     pressedKeys.current.add(key);
-    // also repeat while pointer held
+    if (holdIntervals.current[key]) clearInterval(holdIntervals.current[key]);
     holdIntervals.current[key] = setInterval(() => pressedKeys.current.add(key), 16);
-  }, [pressedKeys]);
+  };
 
-  const release = useCallback((key) => {
+  const release = (key) => {
     pressedKeys.current.delete(key);
-    clearInterval(holdIntervals.current[key]);
-  }, [pressedKeys]);
+    if (holdIntervals.current[key]) {
+      clearInterval(holdIntervals.current[key]);
+      delete holdIntervals.current[key];
+    }
+  };
 
-  const DPadBtn = ({ direction, keyCode, icon: Icon, label, gridArea }) => (
-    <button
-      onPointerDown={() => press(keyCode)}
-      onPointerUp={() => release(keyCode)}
-      onPointerLeave={() => release(keyCode)}
-      aria-label={label}
-      style={{ gridArea }}
-      className={`
-        flex items-center justify-center rounded-lg border select-none touch-none
-        bg-slate-900/80 border-slate-700 text-slate-300
-        hover:bg-cyan-950/60 hover:border-cyan-500 hover:text-cyan-300
-        active:bg-cyan-900/80 active:border-cyan-400 active:scale-95
-        transition-all duration-100 cursor-pointer p-3
-        shadow-md shadow-black/40
-      `}
-    >
-      <Icon className="w-5 h-5 pointer-events-none" />
-    </button>
-  );
+  // Clear any dangling intervals on unmount
+  useEffect(() => {
+    const intervals = holdIntervals.current;
+    return () => {
+      Object.values(intervals).forEach(clearInterval);
+    };
+  }, []);
 
   const modes = [
     { id: 'MANUAL',           label: 'Manual',   color: 'violet' },
@@ -123,9 +142,10 @@ export default function RobotController({ pressedKeys, controlMode, setControlMo
             return (
               <button
                 key={id}
+                type="button"
                 onClick={() => setControlMode(id)}
                 className={`
-                  py-2 px-1 rounded-lg border text-xs font-display font-semibold
+                  py-2 px-1 rounded-lg border text-xs font-display font-semibold cursor-pointer
                   transition-all duration-150 shadow-md
                   ${isActive ? cls.active : cls.inactive}
                 `}
@@ -156,14 +176,14 @@ export default function RobotController({ pressedKeys, controlMode, setControlMo
             width: '160px',
           }}
         >
-          <DPadBtn direction="up"    keyCode="w" icon={ArrowUp}    label="Forward" gridArea="up"    />
-          <DPadBtn direction="left"  keyCode="a" icon={ArrowLeft}  label="Turn Left" gridArea="left"  />
+          <DPadBtn keyCode="w" icon={ArrowUp}    label="Forward" gridArea="up"    onPress={press} onRelease={release} />
+          <DPadBtn keyCode="a" icon={ArrowLeft}  label="Turn Left" gridArea="left"  onPress={press} onRelease={release} />
           {/* Centre pip */}
           <div style={{ gridArea: 'mid' }} className="flex items-center justify-center">
             <div className="w-3 h-3 rounded-full bg-violet-500/60 border border-violet-400/40 shadow-sm shadow-violet-500/30" />
           </div>
-          <DPadBtn direction="right" keyCode="d" icon={ArrowRight} label="Turn Right" gridArea="right" />
-          <DPadBtn direction="down"  keyCode="s" icon={ArrowDown}  label="Reverse"  gridArea="down"  />
+          <DPadBtn keyCode="d" icon={ArrowRight} label="Turn Right" gridArea="right" onPress={press} onRelease={release} />
+          <DPadBtn keyCode="s" icon={ArrowDown}  label="Reverse"  gridArea="down"  onPress={press} onRelease={release} />
         </div>
 
         {/* Keyboard hint */}
@@ -175,15 +195,17 @@ export default function RobotController({ pressedKeys, controlMode, setControlMo
       {/* Quick Actions */}
       <div className="grid grid-cols-2 gap-2 border-t border-slate-800 pt-4">
         <button
+          type="button"
           onClick={onReset}
-          className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 text-xs font-display hover:border-slate-500 hover:text-slate-100 transition-all"
+          className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 text-xs font-display hover:border-slate-500 hover:text-slate-100 transition-all cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           Reset Robot
         </button>
         <button
+          type="button"
           onClick={() => setControlMode('AUTONOMOUS_CHASE')}
-          className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-cyan-700/60 bg-cyan-950/30 text-cyan-300 text-xs font-display hover:border-cyan-500 hover:bg-cyan-900/40 transition-all"
+          className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-cyan-700/60 bg-cyan-950/30 text-cyan-300 text-xs font-display hover:border-cyan-500 hover:bg-cyan-900/40 transition-all cursor-pointer"
         >
           <Zap className="w-3.5 h-3.5" />
           Auto Chase

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Camera, RefreshCw, Crosshair, Sliders, Eye, EyeOff, Sparkles, AlertCircle, Play, Pause } from 'lucide-react';
+import { Camera, Sliders, Eye, EyeOff, Play, Pause, Video } from 'lucide-react';
 import { analyzeFrame, drawSyntheticFeed, COLOR_PRESETS } from '../utils/visionProcessor';
 
 export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, setVisionTarget, onFpsUpdate }) {
@@ -8,14 +8,24 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
   const [isPaused, setIsPaused] = useState(false);
   const [activePreset, setActivePreset] = useState('CYAN');
   const [manualTarget, setManualTarget] = useState({ x: 300, y: 200 });
+  const [cameraError, setCameraError] = useState(null);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const maskCanvasRef = useRef(null);
   const animFrameId = useRef(null);
 
-  const fpsTimeRef = useRef(performance.now());
+  const fpsTimeRef = useRef(0);
   const frameCountRef = useRef(0);
+
+  // Store callbacks in refs to avoid restarting the animation loop on prop change
+  const onFpsUpdateRef = useRef(onFpsUpdate);
+  const setVisionTargetRef = useRef(setVisionTarget);
+
+  useEffect(() => {
+    onFpsUpdateRef.current = onFpsUpdate;
+    setVisionTargetRef.current = setVisionTarget;
+  }, [onFpsUpdate, setVisionTarget]);
 
   // Handle Preset selection
   const applyPreset = (presetKey) => {
@@ -33,21 +43,39 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
     }
   };
 
+  const handleToggleWebcam = () => {
+    if (!useWebcam) {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setCameraError('Webcam API is not supported in this browser.');
+        return;
+      }
+      setCameraError(null);
+      setUseWebcam(true);
+    } else {
+      setCameraError(null);
+      setUseWebcam(false);
+    }
+  };
+
   // Start / Stop Webcam
   useEffect(() => {
     let stream = null;
 
     if (useWebcam) {
-      navigator.mediaDevices?.getUserMedia({ video: { width: 640, height: 480 } })
+      navigator.mediaDevices
+        .getUserMedia({ video: { width: 640, height: 480 } })
         .then((s) => {
           stream = s;
           if (videoRef.current) {
             videoRef.current.srcObject = s;
-            videoRef.current.play();
+            videoRef.current.play().catch((err) => {
+              console.warn('Video play error:', err);
+            });
           }
         })
         .catch((err) => {
           console.warn('Webcam permission denied or unavailable:', err);
+          setCameraError(err.message || 'Webcam access denied. Reverting to Synthetic Feed.');
           setUseWebcam(false);
         });
     } else {
@@ -66,21 +94,23 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
 
   // Main Processing Loop
   useEffect(() => {
-    let lastTime = performance.now();
-
     const renderLoop = (time) => {
       if (isPaused) {
         animFrameId.current = requestAnimationFrame(renderLoop);
         return;
       }
 
-      const deltaSec = (time - lastTime) / 1000;
-      lastTime = time;
+      // Initialize fpsTimeRef lazily
+      if (fpsTimeRef.current === 0) {
+        fpsTimeRef.current = time;
+      }
 
       // FPS Counter
       frameCountRef.current++;
       if (time - fpsTimeRef.current >= 1000) {
-        onFpsUpdate(frameCountRef.current);
+        if (onFpsUpdateRef.current) {
+          onFpsUpdateRef.current(frameCountRef.current);
+        }
         frameCountRef.current = 0;
         fpsTimeRef.current = time;
       }
@@ -96,7 +126,7 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
       const width = canvas.width || 640;
       const height = canvas.height || 480;
 
-      if (useWebcam && videoRef.current && videoRef.current.readyState === 4) {
+      if (useWebcam && videoRef.current && videoRef.current.readyState >= 2) {
         ctx.drawImage(videoRef.current, 0, 0, width, height);
       } else {
         // Draw synthetic moving ball feed
@@ -131,7 +161,7 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
           const bracketLen = 12;
           ctx.strokeStyle = '#00f3ff';
           ctx.lineWidth = 3;
-          
+
           // Top Left
           ctx.beginPath(); ctx.moveTo(minX, minY + bracketLen); ctx.lineTo(minX, minY); ctx.lineTo(minX + bracketLen, minY); ctx.stroke();
           // Top Right
@@ -154,24 +184,26 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
 
           // Coordinate Tag
           ctx.fillStyle = 'rgba(10, 15, 25, 0.85)';
-          ctx.fillRect(analysis.cx + 15, analysis.cy - 25, 110, 24);
+          ctx.fillRect(analysis.cx + 15, analysis.cy - 25, 115, 24);
           ctx.strokeStyle = '#00f3ff';
-          ctx.strokeRect(analysis.cx + 15, analysis.cy - 25, 110, 24);
+          ctx.strokeRect(analysis.cx + 15, analysis.cy - 25, 115, 24);
           ctx.fillStyle = '#00f3ff';
           ctx.font = '11px "JetBrains Mono", monospace';
           ctx.fillText(`X:${analysis.cx} Y:${analysis.cy}`, analysis.cx + 22, analysis.cy - 9);
         }
 
         // Send state to parent component
-        setVisionTarget({
-          hasTarget: analysis.hasTarget,
-          x: analysis.cx,
-          y: analysis.cy,
-          normX: (analysis.cx / width) * 2 - 1, // Normalized -1 to +1
-          normY: (analysis.cy / height) * 2 - 1,
-          areaRatio: analysis.areaRatio,
-          bbox: analysis.bbox,
-        });
+        if (setVisionTargetRef.current) {
+          setVisionTargetRef.current({
+            hasTarget: analysis.hasTarget,
+            x: analysis.cx,
+            y: analysis.cy,
+            normX: (analysis.cx / width) * 2 - 1, // Normalized -1 to +1
+            normY: (analysis.cy / height) * 2 - 1,
+            areaRatio: analysis.areaRatio,
+            bbox: analysis.bbox,
+          });
+        }
       }
 
       animFrameId.current = requestAnimationFrame(renderLoop);
@@ -198,31 +230,40 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
       {/* Video & Vision Viewport */}
       <div className="lg:col-span-8 flex flex-col gap-4">
         <div className="glass-panel glass-panel-glow p-4 relative overflow-hidden flex flex-col items-center">
-          <div className="w-full flex items-center justify-between mb-3">
+          <div className="w-full flex flex-wrap items-center justify-between gap-3 mb-3">
             <h2 className="font-display font-bold text-lg text-cyan-400 flex items-center gap-2">
               <Camera className="w-5 h-5" />
-              <span>LIVE COMPUTER VISION FEED (640x480)</span>
+              <span>LIVE COMPUTER VISION FEED (640×480)</span>
             </h2>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setUseWebcam(!useWebcam)}
-                className={`btn-cyber ${useWebcam ? 'btn-cyber-red' : ''} text-xs py-1.5`}
+                type="button"
+                onClick={handleToggleWebcam}
+                className={`btn-cyber ${useWebcam ? 'btn-cyber-red' : ''} text-xs py-1.5 cursor-pointer`}
               >
-                <Camera className="w-4 h-4" />
-                <span>{useWebcam ? 'Switch to Synthetic Target' : 'Enable Webcam'}</span>
+                {useWebcam ? <Video className="w-4 h-4" /> : <Camera className="w-4 h-4" />}
+                <span>{useWebcam ? 'Switch to Synthetic' : 'Enable Webcam'}</span>
               </button>
               <button
+                type="button"
                 onClick={() => setIsPaused(!isPaused)}
-                className="btn-cyber btn-cyber-secondary text-xs py-1.5"
+                className="btn-cyber btn-cyber-secondary text-xs py-1.5 cursor-pointer"
               >
-                {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                {isPaused ? <Play className="w-4 h-4 text-emerald-400" /> : <Pause className="w-4 h-4 text-amber-400" />}
                 <span>{isPaused ? 'Resume' : 'Pause'}</span>
               </button>
             </div>
           </div>
 
+          {/* Optional camera warning */}
+          {cameraError && (
+            <div className="w-full mb-3 p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/50 text-rose-300 text-xs font-mono">
+              ⚠️ {cameraError}
+            </div>
+          )}
+
           {/* Hidden Video element for Webcam */}
-          <video ref={videoRef} className="hidden" playsInline muted></video>
+          <video ref={videoRef} className="hidden" playsInline muted autoPlay></video>
 
           {/* Main Visualizer Canvas */}
           <div className="relative w-full max-w-[640px] aspect-[4/3] rounded-lg overflow-hidden border border-cyan-500/30 bg-slate-950 shadow-2xl group cursor-crosshair">
@@ -237,15 +278,15 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
             {/* Target Crosshair & Grid HUD Overlay */}
             <div className="absolute inset-0 pointer-events-none border border-cyan-500/20 rounded-lg">
               <div className="absolute top-2 left-2 text-[10px] font-mono text-cyan-400 bg-slate-950/80 px-2 py-1 rounded border border-cyan-500/30">
-                MODE: {useWebcam ? 'WEBCAM INPUT' : 'SYNTHETIC CANAL TARGET'}
+                MODE: {useWebcam ? 'WEBCAM INPUT' : 'SYNTHETIC VIRTUAL TARGET'}
               </div>
               <div className="absolute top-2 right-2 text-[10px] font-mono text-emerald-400 bg-slate-950/80 px-2 py-1 rounded border border-emerald-500/30">
                 {visionTarget.hasTarget ? 'LOCK: ACTIVE' : 'LOCK: SEARCHING'}
               </div>
 
               {!useWebcam && (
-                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[11px] font-mono text-cyan-300/80 bg-slate-950/90 px-3 py-1 rounded-full border border-cyan-500/30 shadow-lg">
-                  💡 Click anywhere on feed to move virtual target object
+                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[11px] font-mono text-cyan-300/80 bg-slate-950/90 px-3 py-1 rounded-full border border-cyan-500/30 shadow-lg pointer-events-none">
+                  💡 Click anywhere on the feed to reposition the virtual target
                 </div>
               )}
             </div>
@@ -260,7 +301,7 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
                   HSV Binary Mask Preview (Filtered Pixels)
                 </span>
                 <span className="text-xs font-mono text-cyan-400">
-                  Matches: {visionTarget.areaRatio ? (visionTarget.areaRatio * 100).toFixed(1) : 0}% area
+                  Detected Area: {visionTarget.areaRatio ? (visionTarget.areaRatio * 100).toFixed(1) : 0}%
                 </span>
               </div>
               <div className="w-full max-w-[640px] h-[120px] rounded border border-slate-700 bg-slate-950 overflow-hidden">
@@ -280,8 +321,9 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
               <span>HSV COLOR THRESHOLDS</span>
             </h3>
             <button
+              type="button"
               onClick={() => setShowMask(!showMask)}
-              className="text-xs text-slate-400 hover:text-cyan-300 flex items-center gap-1"
+              className="text-xs text-slate-400 hover:text-cyan-300 flex items-center gap-1 cursor-pointer"
             >
               {showMask ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               <span>{showMask ? 'Hide Mask' : 'Show Mask'}</span>
@@ -290,13 +332,14 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
 
           {/* Color Presets */}
           <div>
-            <label className="text-xs font-mono text-slate-400 mb-2 block">Quick Target Color Presets:</label>
+            <label className="text-xs font-mono text-slate-400 mb-2 block">Target Color Presets:</label>
             <div className="grid grid-cols-2 gap-2">
               {Object.keys(COLOR_PRESETS).map((key) => (
                 <button
                   key={key}
+                  type="button"
                   onClick={() => applyPreset(key)}
-                  className={`px-2.5 py-1.5 rounded text-xs font-display font-semibold border transition-all text-left truncate ${
+                  className={`px-2.5 py-1.5 rounded text-xs font-display font-semibold border transition-all text-left truncate cursor-pointer ${
                     activePreset === key
                       ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-950'
                       : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
@@ -313,8 +356,8 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
             {/* Hue */}
             <div>
               <div className="flex justify-between mb-1">
-                <span>Hue (H) Min-Max:</span>
-                <span className="text-cyan-400">{hsvConfig.minH}° - {hsvConfig.maxH}°</span>
+                <span>Hue (H) Min - Max:</span>
+                <span className="text-cyan-400">{hsvConfig.minH}° – {hsvConfig.maxH}°</span>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <input
@@ -322,14 +365,20 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
                   min="0"
                   max="360"
                   value={hsvConfig.minH}
-                  onChange={(e) => setHsvConfig({ ...hsvConfig, minH: parseInt(e.target.value) })}
+                  onChange={(e) => {
+                    setActivePreset('CUSTOM');
+                    setHsvConfig({ ...hsvConfig, minH: parseInt(e.target.value) });
+                  }}
                 />
                 <input
                   type="range"
                   min="0"
                   max="360"
                   value={hsvConfig.maxH}
-                  onChange={(e) => setHsvConfig({ ...hsvConfig, maxH: parseInt(e.target.value) })}
+                  onChange={(e) => {
+                    setActivePreset('CUSTOM');
+                    setHsvConfig({ ...hsvConfig, maxH: parseInt(e.target.value) });
+                  }}
                 />
               </div>
             </div>
@@ -337,8 +386,8 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
             {/* Saturation */}
             <div>
               <div className="flex justify-between mb-1">
-                <span>Saturation (S) Min-Max:</span>
-                <span className="text-emerald-400">{hsvConfig.minS}% - {hsvConfig.maxS}%</span>
+                <span>Saturation (S) Min - Max:</span>
+                <span className="text-emerald-400">{hsvConfig.minS}% – {hsvConfig.maxS}%</span>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <input
@@ -346,14 +395,20 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
                   min="0"
                   max="100"
                   value={hsvConfig.minS}
-                  onChange={(e) => setHsvConfig({ ...hsvConfig, minS: parseInt(e.target.value) })}
+                  onChange={(e) => {
+                    setActivePreset('CUSTOM');
+                    setHsvConfig({ ...hsvConfig, minS: parseInt(e.target.value) });
+                  }}
                 />
                 <input
                   type="range"
                   min="0"
                   max="100"
                   value={hsvConfig.maxS}
-                  onChange={(e) => setHsvConfig({ ...hsvConfig, maxS: parseInt(e.target.value) })}
+                  onChange={(e) => {
+                    setActivePreset('CUSTOM');
+                    setHsvConfig({ ...hsvConfig, maxS: parseInt(e.target.value) });
+                  }}
                 />
               </div>
             </div>
@@ -361,8 +416,8 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
             {/* Value (Brightness) */}
             <div>
               <div className="flex justify-between mb-1">
-                <span>Value / Brightness (V) Min-Max:</span>
-                <span className="text-amber-400">{hsvConfig.minV}% - {hsvConfig.maxV}%</span>
+                <span>Value (V) Min - Max:</span>
+                <span className="text-amber-400">{hsvConfig.minV}% – {hsvConfig.maxV}%</span>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <input
@@ -370,14 +425,20 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
                   min="0"
                   max="100"
                   value={hsvConfig.minV}
-                  onChange={(e) => setHsvConfig({ ...hsvConfig, minV: parseInt(e.target.value) })}
+                  onChange={(e) => {
+                    setActivePreset('CUSTOM');
+                    setHsvConfig({ ...hsvConfig, minV: parseInt(e.target.value) });
+                  }}
                 />
                 <input
                   type="range"
                   min="0"
                   max="100"
                   value={hsvConfig.maxV}
-                  onChange={(e) => setHsvConfig({ ...hsvConfig, maxV: parseInt(e.target.value) })}
+                  onChange={(e) => {
+                    setActivePreset('CUSTOM');
+                    setHsvConfig({ ...hsvConfig, maxV: parseInt(e.target.value) });
+                  }}
                 />
               </div>
             </div>
@@ -385,21 +446,22 @@ export default function VisionEngine({ hsvConfig, setHsvConfig, visionTarget, se
 
           {/* Current Target Stats */}
           <div className="mt-2 p-3 rounded-lg bg-slate-900/80 border border-slate-800 font-mono text-xs">
-            <div className="text-slate-400 mb-1 border-b border-slate-800 pb-1 font-semibold">
-              🎯 TARGET CENTROID TELEMETRY
+            <div className="text-slate-400 mb-1 border-b border-slate-800 pb-1 font-semibold flex justify-between">
+              <span>🎯 TARGET CENTROID TELEMETRY</span>
+              <span className={visionTarget.hasTarget ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                {visionTarget.hasTarget ? 'LOCKED' : 'SEARCHING'}
+              </span>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2">
-              <span className="text-slate-400">Target X:</span>
-              <span className="text-cyan-400">{visionTarget.x || 0} px</span>
-              <span className="text-slate-400">Target Y:</span>
-              <span className="text-cyan-400">{visionTarget.y || 0} px</span>
+              <span className="text-slate-400">Centroid (X, Y):</span>
+              <span className="text-cyan-400">{visionTarget.x || 0}, {visionTarget.y || 0} px</span>
               <span className="text-slate-400">Normalized Error:</span>
               <span className={visionTarget.hasTarget ? 'text-emerald-400' : 'text-slate-500'}>
                 {(visionTarget.normX || 0).toFixed(2)}
               </span>
-              <span className="text-slate-400">Lock State:</span>
-              <span className={visionTarget.hasTarget ? 'text-emerald-400 font-bold' : 'text-rose-400'}>
-                {visionTarget.hasTarget ? 'LOCKED' : 'NO TARGET'}
+              <span className="text-slate-400">Bounding Box:</span>
+              <span className="text-cyan-300">
+                {visionTarget.bbox ? `${visionTarget.bbox.width}×${visionTarget.bbox.height}` : 'None'}
               </span>
             </div>
           </div>
