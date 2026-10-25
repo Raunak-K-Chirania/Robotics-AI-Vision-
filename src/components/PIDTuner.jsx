@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Sliders, Activity, Zap, RefreshCw } from 'lucide-react';
+import { Sliders, Activity } from 'lucide-react';
 
 export default function PIDTuner({ pidConfig, setPidConfig, errorAngleDeg }) {
   const [history, setHistory] = useState([]);
@@ -16,6 +16,14 @@ export default function PIDTuner({ pidConfig, setPidConfig, errorAngleDeg }) {
     AGGRESSIVE: { name: 'Aggressive Pursuit', kp: 4.2, ki: 0.2, kd: 0.8 },
     DAMPED: { name: 'Critically Damped', kp: 2.5, ki: 0.0, kd: 0.9 },
     OSCILLATING: { name: 'Underdamped (High Gain)', kp: 5.5, ki: 0.6, kd: 0.05 },
+  };
+
+  const handleSelectPreset = (key) => {
+    setPidConfig({
+      kp: presets[key].kp,
+      ki: presets[key].ki,
+      kd: presets[key].kd,
+    });
   };
 
   // Record history periodically (every 100ms) safely
@@ -57,6 +65,13 @@ export default function PIDTuner({ pidConfig, setPidConfig, errorAngleDeg }) {
     ctx.moveTo(0, (height * 3) / 4);
     ctx.lineTo(width, (height * 3) / 4);
     ctx.stroke();
+
+    // Scale text
+    ctx.fillStyle = '#475569';
+    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.fillText('+90°', 4, 12);
+    ctx.fillText('0°', 4, height / 2 - 3);
+    ctx.fillText('-90°', 4, height - 4);
 
     if (history.length < 2) return;
 
@@ -110,15 +125,26 @@ export default function PIDTuner({ pidConfig, setPidConfig, errorAngleDeg }) {
       <div>
         <label className="text-xs font-mono text-slate-400 mb-2 block">PID Tuning Presets:</label>
         <div className="grid grid-cols-2 gap-2">
-          {Object.keys(presets).map((key) => (
-            <button
-              key={key}
-              onClick={() => setPidConfig({ kp: presets[key].kp, ki: presets[key].ki, kd: presets[key].kd })}
-              className="px-2.5 py-1.5 rounded text-xs font-display font-semibold bg-slate-900 border border-slate-700 hover:border-cyan-400 text-slate-300 hover:text-cyan-300 text-left truncate transition-all cursor-pointer"
-            >
-              ⚡ {presets[key].name}
-            </button>
-          ))}
+          {Object.keys(presets).map((key) => {
+            const isMatch =
+              pidConfig.kp === presets[key].kp &&
+              pidConfig.ki === presets[key].ki &&
+              pidConfig.kd === presets[key].kd;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => handleSelectPreset(key)}
+                className={`px-2.5 py-1.5 rounded text-xs font-display font-semibold text-left truncate transition-all cursor-pointer border ${
+                  isMatch
+                    ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-950'
+                    : 'bg-slate-900 border-slate-700 hover:border-cyan-400 text-slate-300 hover:text-cyan-300'
+                }`}
+              >
+                ⚡ {presets[key].name}
+              </button>
+            );
+          })}
         </div>
       </div>
 

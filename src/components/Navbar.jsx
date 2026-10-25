@@ -1,9 +1,9 @@
 import React from 'react';
-import { Bot, Camera, Cpu, Code2, BookOpen, Sparkles, Activity, Gamepad2 } from 'lucide-react';
+import { Bot, Camera, Code2, BookOpen, Activity, Gamepad2 } from 'lucide-react';
 
 export default function Navbar({ activeTab, setActiveTab, fps, isLocked, controlMode }) {
   return (
-    <header className="w-full glass-panel border-b border-cyan-900/40 px-6 py-3 flex flex-wrap items-center justify-between gap-4 z-50 sticky top-0 bg-slate-950/80">
+    <header className="w-full glass-panel border-b border-cyan-900/40 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-4 z-50 sticky top-0 bg-slate-950/80 backdrop-blur-md">
       {/* Brand Title */}
       <div className="flex items-center gap-3">
         <div className="relative flex items-center justify-center w-10 h-10 rounded-lg bg-cyan-500/10 border border-cyan-400/40 text-cyan-400">
@@ -23,10 +23,10 @@ export default function Navbar({ activeTab, setActiveTab, fps, isLocked, control
       </div>
 
       {/* Mode Navigation Tabs */}
-      <nav className="flex items-center gap-1 bg-slate-900/90 p-1.5 rounded-xl border border-slate-800">
+      <nav className="flex items-center gap-1 bg-slate-900/90 p-1.5 rounded-xl border border-slate-800 overflow-x-auto max-w-full">
         <button
           onClick={() => setActiveTab('simulator')}
-          className={`px-4 py-2 rounded-lg text-sm font-display font-semibold transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-display font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
             activeTab === 'simulator'
               ? 'bg-gradient-to-r from-cyan-500/20 to-blue-600/30 text-cyan-300 border border-cyan-400/50 shadow-lg shadow-cyan-950'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -38,7 +38,7 @@ export default function Navbar({ activeTab, setActiveTab, fps, isLocked, control
 
         <button
           onClick={() => setActiveTab('vision')}
-          className={`px-4 py-2 rounded-lg text-sm font-display font-semibold transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-display font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
             activeTab === 'vision'
               ? 'bg-gradient-to-r from-cyan-500/20 to-blue-600/30 text-cyan-300 border border-cyan-400/50 shadow-lg shadow-cyan-950'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -50,7 +50,7 @@ export default function Navbar({ activeTab, setActiveTab, fps, isLocked, control
 
         <button
           onClick={() => setActiveTab('code')}
-          className={`px-4 py-2 rounded-lg text-sm font-display font-semibold transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-display font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
             activeTab === 'code'
               ? 'bg-gradient-to-r from-cyan-500/20 to-blue-600/30 text-cyan-300 border border-cyan-400/50 shadow-lg shadow-cyan-950'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -62,7 +62,7 @@ export default function Navbar({ activeTab, setActiveTab, fps, isLocked, control
 
         <button
           onClick={() => setActiveTab('hardware')}
-          className={`px-4 py-2 rounded-lg text-sm font-display font-semibold transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-display font-semibold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
             activeTab === 'hardware'
               ? 'bg-gradient-to-r from-cyan-500/20 to-blue-600/30 text-cyan-300 border border-cyan-400/50 shadow-lg shadow-cyan-950'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'

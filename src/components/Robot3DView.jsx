@@ -1,11 +1,14 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
+import { Eye, Crosshair, MapPin } from 'lucide-react';
 
 /**
  * Robot3DView — Three.js 3D arena with three control modes:
  *   AUTONOMOUS_CHASE  → PID-driven pursuit
  *   SENTRY_TURRET     → body fixed, turret pans to track
  *   MANUAL            → WASD / arrow keys via pressedKeys ref
+ * Includes multiple camera angles (Follow, FPV Cockpit, Tactical Birds-Eye)
+ * and interactive target positioning.
  */
 export default function Robot3DView({
   visionTarget,
@@ -18,8 +21,9 @@ export default function Robot3DView({
   showFOV,
   showLaser,
 }) {
-  const mountRef      = useRef(null);
-  const animFrameRef  = useRef(null);
+  const mountRef     = useRef(null);
+  const animFrameRef = useRef(null);
+  const [cameraView, setCameraView] = useState('FOLLOW'); // 'FOLLOW', 'FPV', 'TACTICAL'
 
   // All physics / scene objects held in refs so the animation loop
   // can read live values without triggering re-renders or re-mounts.
@@ -38,18 +42,22 @@ export default function Robot3DView({
   const lastTelemetryTime = useRef(0);
 
   // "Live" refs — updated synchronously so animation loop sees current values
-  const modeRef    = useRef(controlMode);
-  const pidRef     = useRef(pidConfig);
-  const patrolRef  = useRef(autoPatrol);
-  const fovRef     = useRef(showFOV);
-  const laserRef   = useRef(showLaser);
-  const keysRef    = pressedKeys; // same ref passed from App
+  const modeRef       = useRef(controlMode);
+  const pidRef        = useRef(pidConfig);
+  const patrolRef     = useRef(autoPatrol);
+  const fovRef        = useRef(showFOV);
+  const laserRef      = useRef(showLaser);
+  const camViewRef    = useRef(cameraView);
+  const visionRef     = useRef(visionTarget);
+  const keysRef       = pressedKeys; // same ref passed from App
 
-  useEffect(() => { modeRef.current   = controlMode; }, [controlMode]);
-  useEffect(() => { pidRef.current    = pidConfig;   }, [pidConfig]);
-  useEffect(() => { patrolRef.current = autoPatrol;  }, [autoPatrol]);
-  useEffect(() => { fovRef.current    = showFOV;     }, [showFOV]);
-  useEffect(() => { laserRef.current  = showLaser;   }, [showLaser]);
+  useEffect(() => { modeRef.current    = controlMode;  }, [controlMode]);
+  useEffect(() => { pidRef.current     = pidConfig;    }, [pidConfig]);
+  useEffect(() => { patrolRef.current  = autoPatrol;   }, [autoPatrol]);
+  useEffect(() => { fovRef.current     = showFOV;      }, [showFOV]);
+  useEffect(() => { laserRef.current   = showLaser;    }, [showLaser]);
+  useEffect(() => { camViewRef.current = cameraView;   }, [cameraView]);
+  useEffect(() => { visionRef.current  = visionTarget; }, [visionTarget]);
 
   // ── Scene bootstrap (runs once on mount) ──────────────────────────────────
   useEffect(() => {
@@ -104,10 +112,10 @@ export default function Robot3DView({
     scene.add(floor);
 
     // Corner pillars with neon caps
-    const pillarGeo  = new THREE.BoxGeometry(0.3, 2.5, 0.3);
-    const pillarMat  = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9 });
-    const capMat     = new THREE.MeshBasicMaterial({ color: 0x00f3ff });
-    [[-14,-14],[14,-14],[-14,14],[14,14]].forEach(([px, pz]) => {
+    const pillarGeo = new THREE.BoxGeometry(0.3, 2.5, 0.3);
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9 });
+    const capMat    = new THREE.MeshBasicMaterial({ color: 0x00f3ff });
+    [[-14, -14], [14, -14], [-14, 14], [14, 14]].forEach(([px, pz]) => {
       const p = new THREE.Mesh(pillarGeo, pillarMat);
       p.position.set(px, 1.25, pz);
       scene.add(p);
@@ -139,7 +147,7 @@ export default function Robot3DView({
     const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.26, 28);
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x080c15, roughness: 0.95 });
     const hubMat   = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.9 });
-    const wheelPositions = [[-0.95, 0.35, 0.75],[0.95, 0.35, 0.75],[-0.95, 0.35, -0.75],[0.95, 0.35, -0.75]];
+    const wheelPositions = [[-0.95, 0.35, 0.75], [0.95, 0.35, 0.75], [-0.95, 0.35, -0.75], [0.95, 0.35, -0.75]];
     const wheels = [];
     wheelPositions.forEach((pos) => {
       const w = new THREE.Mesh(wheelGeo, wheelMat);
@@ -231,10 +239,28 @@ export default function Robot3DView({
       prevTime    = now;
       elapsed    += delta;
 
+      // Handle Reset trigger
+      if (window.__robotReset) {
+        window.__robotReset = false;
+        robotPos.current = { x: 0, z: 0, heading: 0 };
+        turretPan.current = 0;
+        pidIntegral.current = 0;
+        pidLastError.current = 0;
+        target3D.current = { x: 0, y: 1.2, z: -4 };
+        elapsed = 0;
+        if (robotGroupRef.current) {
+          robotGroupRef.current.position.set(0, 0, 0);
+          robotGroupRef.current.rotation.set(0, 0, 0);
+        }
+        if (turretGroupRef.current) {
+          turretGroupRef.current.rotation.set(0, 0, 0);
+        }
+      }
+
       const mode = modeRef.current;
       const pid  = pidRef.current;
 
-      // Move target drone on patrol path
+      // Move target drone on patrol path if enabled
       if (patrolRef.current) {
         target3D.current.x = Math.sin(elapsed * 0.75) * 5.5;
         target3D.current.z = -5 + Math.cos(elapsed * 1.3) * 3.2;
@@ -302,12 +328,32 @@ export default function Robot3DView({
 
         if (turretGroupRef.current) turretGroupRef.current.rotation.y = turretPan.current;
 
-        // Follow-cam
-        camera.position.x = THREE.MathUtils.lerp(camera.position.x, robotPos.current.x, delta * 3.5);
-        camera.position.z = THREE.MathUtils.lerp(camera.position.z, robotPos.current.z + 8.5, delta * 3.5);
-        camera.lookAt(robotPos.current.x, 1, robotPos.current.z - 1);
+        // Camera views management
+        const camMode = camViewRef.current;
+        if (camMode === 'FOLLOW') {
+          camera.position.x = THREE.MathUtils.lerp(camera.position.x, robotPos.current.x, delta * 3.5);
+          camera.position.y = THREE.MathUtils.lerp(camera.position.y, 7, delta * 3.5);
+          camera.position.z = THREE.MathUtils.lerp(camera.position.z, robotPos.current.z + 8.5, delta * 3.5);
+          camera.lookAt(robotPos.current.x, 1, robotPos.current.z - 1);
+        } else if (camMode === 'FPV') {
+          // First-person view from robot turret looking forward
+          const eyeX = robotPos.current.x;
+          const eyeY = 1.35;
+          const eyeZ = robotPos.current.z;
+          camera.position.set(eyeX, eyeY, eyeZ);
+          const totalHeading = robotPos.current.heading + turretPan.current;
+          const lookTargetX = eyeX + Math.sin(totalHeading) * -10;
+          const lookTargetZ = eyeZ + Math.cos(totalHeading) * -10;
+          camera.lookAt(lookTargetX, 1.2, lookTargetZ);
+        } else if (camMode === 'TACTICAL') {
+          // High overhead tactical map view
+          camera.position.x = THREE.MathUtils.lerp(camera.position.x, 0, delta * 3);
+          camera.position.y = THREE.MathUtils.lerp(camera.position.y, 22, delta * 3);
+          camera.position.z = THREE.MathUtils.lerp(camera.position.z, 0.1, delta * 3);
+          camera.lookAt(0, 0, 0);
+        }
 
-        // Throttle telemetry to ~10 Hz
+        // Throttle telemetry updates to ~10 Hz
         if (now - lastTelemetryTime.current >= 100) {
           lastTelemetryTime.current = now;
           const leftPwm  = Math.round(Math.max(0, Math.min(255, 150 + pidSteer * 40)));
@@ -348,21 +394,97 @@ export default function Robot3DView({
       renderer.dispose();
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // mount once — everything else via refs
+  }, [setRobotTelemetry, keysRef]);
+
+  // Click on canvas to move target drone manually
+  const handleArenaClick = (e) => {
+    if (autoPatrol) return; // Only manual click when patrol is off
+    const container = mountRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const xRatio = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const yRatio = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+    // Project ground plane coordinates
+    target3D.current.x = Math.max(-12, Math.min(12, xRatio * 14));
+    target3D.current.z = Math.max(-12, Math.min(12, -yRatio * 14));
+  };
 
   return (
-    <div className="w-full">
+    <div className="w-full flex flex-col gap-2">
       {/* 3D Viewport */}
-      <div className="relative w-full h-[520px] rounded-xl overflow-hidden border border-cyan-500/40 shadow-2xl"
-           style={{ boxShadow: '0 0 30px rgba(0,243,255,0.10), inset 0 0 20px rgba(0,243,255,0.04)' }}>
+      <div
+        className="relative w-full h-[520px] rounded-xl overflow-hidden border border-cyan-500/40 shadow-2xl cursor-pointer"
+        style={{ boxShadow: '0 0 30px rgba(0,243,255,0.10), inset 0 0 20px rgba(0,243,255,0.04)' }}
+        onClick={handleArenaClick}
+      >
         <div ref={mountRef} className="w-full h-full" />
 
         {/* Top-left live badge */}
         <div className="absolute top-3 left-3 flex items-center gap-2 bg-slate-950/88 backdrop-blur-md px-3 py-1.5 rounded-lg border border-cyan-500/30 pointer-events-none">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping opacity-80" />
           <span className="font-display text-xs font-bold text-cyan-300 tracking-wider">LIVE 3D ARENA</span>
+          {visionTarget?.hasTarget && (
+            <span className="text-[10px] bg-emerald-950/80 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/40 ml-1">
+              AI VISION LOCKED
+            </span>
+          )}
         </div>
+
+        {/* Camera Perspective Selector (Top-Center) */}
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-slate-950/90 backdrop-blur-md p-1 rounded-lg border border-cyan-500/30 shadow-xl z-10">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setCameraView('FOLLOW'); }}
+            className={`px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1.5 transition-all cursor-pointer ${
+              cameraView === 'FOLLOW'
+                ? 'bg-cyan-500/25 border border-cyan-400 text-cyan-300'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Follow</span>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setCameraView('FPV'); }}
+            className={`px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1.5 transition-all cursor-pointer ${
+              cameraView === 'FPV'
+                ? 'bg-cyan-500/25 border border-cyan-400 text-cyan-300'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+            <span>FPV Turret</span>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setCameraView('TACTICAL'); }}
+            className={`px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1.5 transition-all cursor-pointer ${
+              cameraView === 'TACTICAL'
+                ? 'bg-cyan-500/25 border border-cyan-400 text-cyan-300'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <MapPin className="w-3.5 h-3.5" />
+            <span>Tactical 2D</span>
+          </button>
+        </div>
+
+        {/* FPV Reticle Overlay in FPV Mode */}
+        {cameraView === 'FPV' && (
+          <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+            <div className="relative w-20 h-20 border border-cyan-400/40 rounded-full flex items-center justify-center">
+              <div className="w-2 h-2 rounded-full bg-cyan-400"></div>
+              <div className="absolute top-0 w-px h-3 bg-cyan-400"></div>
+              <div className="absolute bottom-0 w-px h-3 bg-cyan-400"></div>
+              <div className="absolute left-0 h-px w-3 bg-cyan-400"></div>
+              <div className="absolute right-0 h-px w-3 bg-cyan-400"></div>
+            </div>
+            <div className="absolute bottom-16 text-[10px] font-mono text-cyan-400 bg-slate-950/80 px-2 py-1 rounded border border-cyan-500/30">
+              ROBOT TURRET EYE · FPV CAMERA
+            </div>
+          </div>
+        )}
 
         {/* Mode badge top-right */}
         <div className="absolute top-3 right-3 pointer-events-none">
@@ -385,6 +507,13 @@ export default function Robot3DView({
             </span>
           )}
         </div>
+
+        {/* Manual Target positioning hint when patrol is off */}
+        {!autoPatrol && (
+          <div className="absolute bottom-3 left-3 bg-slate-950/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-amber-500/30 text-[11px] font-mono text-amber-300 pointer-events-none">
+            💡 Target Patrol is OFF: Click anywhere in arena to move drone
+          </div>
+        )}
 
         {/* HUD telemetry bottom-right */}
         <div className="absolute bottom-3 right-3 bg-slate-950/90 backdrop-blur-md p-3 rounded-lg border border-cyan-500/25 font-mono text-xs text-slate-300 flex flex-col gap-1 w-56 shadow-xl pointer-events-none">

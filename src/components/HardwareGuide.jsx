@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, Cpu, Battery, Wrench, CheckCircle2, Zap, ShieldAlert } from 'lucide-react';
+import { Cpu, Wrench, CheckCircle2, Zap, ShieldAlert } from 'lucide-react';
 
 export default function HardwareGuide() {
   const bomList = [
